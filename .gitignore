@@ -1,0 +1,6 @@
+# Default ignored files
+/shelf/
+/.idea/workspace.xml
+/sample files/Tanks.accdb
+/db_config.ini
+/test.py
