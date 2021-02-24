@@ -9,6 +9,16 @@ from psycopg2 import extras
 class DataLoader:
 
     def __init__(self, data: DataFrame, value_convert: Optional[Callable[[Any], str]] = None):
+        """
+        Creates a DataLoader object to assist in the insertion of a DataFrame into a DB
+
+        Parameters
+        ----------
+        value_convert : (Optional) if the user wants to specify how values are to be converted
+            to string objects to be inserted into the DB, they can do so here. The expected format
+            is '(Any) -> str' as to account for Pandas inferring data types but always converting
+            the DataFrame elements to string objects
+        """
         self.data = data
         self.value_convert = value_convert if value_convert is not None else utf8_convert
 

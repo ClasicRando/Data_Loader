@@ -1,14 +1,15 @@
 from file_loader import FileLoader
 import time
 
-# fa = FileLoader("bsadb.xlsx", "XLSX", sheet_name="BSA 12 2020")
-fa = FileLoader(
-    r"C:\Users\steve\IdeaProjects\Data Analyzer Python\Tanks.accdb",
-    "ACCDB",
-    table_name="tbAllRegUSTs"
-)
+
 start = time.time()
-# fa = FileLoader("tblAllTanks.txt", "FLAT", separator=",", qualifier=True, encoding="utf8")
+# fa = FileLoader("sample files/bsadb.xlsx", "XLSX", sheet_name="BSA 12 2020")
+# fa = FileLoader(
+#     r"sample files/Tanks.accdb",
+#     "ACCDB",
+#     table_name="tbAllRegUSTs"
+# )
+fa = FileLoader("sample files/tblAllTanks.txt", "FLAT", separator=",", qualifier=True, encoding="utf8")
 # fa = FileLoader("TCEQ_BROWNFIELDS_POINTS.dbf", "DBF")
 result = fa.analyze_file("postgresql")
 if result.code == 1:

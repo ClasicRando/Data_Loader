@@ -29,9 +29,9 @@ class FileLoader:
             category of data file passed. Currently supported types are: 1) FLAT (.txt,
             .csv, .tsv, etc.) 2) ACCDB (.accdb and .mdb) 3) DBF (.dbf) 4) XLSX (.xlsx)
         value_convert : (Optional) if the user wants to specify how values are to be converted
-            to string objects to be inserted into the DB, the can do so here. The expected format is
-            '(Any) -> str' as to account for Pandas inferring data types but always converting the
-            DataFrame elements to string objects
+            to string objects to be inserted into the DB, they can do so here. The expected format
+            is '(Any) -> str' as to account for Pandas inferring data types but always converting
+            the DataFrame elements to string objects
 
         Keyword arguments
         -----------------
@@ -49,7 +49,7 @@ class FileLoader:
             name of the sheet to extract for the excel file. Required for XLSX
         chunk_size : int
             chunksize parameter used for read_sql and read_csv. Number of records to read into
-            memory at a given time. Does nothing if file_type not FLAT or ACCDB
+            memory at a given time. Only affects your operations if file_type FLAT or ACCDB
         """
         self.path = abspath(file_path)
         self.file_type = file_type
