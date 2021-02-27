@@ -288,9 +288,6 @@ class FileLoader:
         records_inserted = 0
         for i, df in enumerate(data):
             start = time.time()
-            end = time.time()
-            print(f"Chunk {i + 1}, Data prep: Time elapsed = {end - start} seconds")
-            start = time.time()
             rows = (row[1].to_list() for row in df.iterrows())
             if dialect == "POSTGRESQL":
                 extras.execute_values(cursor, insert_sql, rows)
