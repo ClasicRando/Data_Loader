@@ -1,7 +1,7 @@
 from pandas import DataFrame, merge
 from typing import Optional, Callable, Any
 from util import (utf8_convert, AnalyzeResult, len_b_str, clean_column_name, dialect_to_col_type,
-                  get_db_connection, clean_table_name, columns_needed)
+                  get_db_connection, clean_table_name, columns_needed, LoadResult)
 import time
 from psycopg2 import extras
 
@@ -68,7 +68,7 @@ class DataLoader:
             ini_path: str,
             ini_section: str,
             table_name: str,
-            column_stats: Optional[DataFrame] = None) -> int:
+            column_stats: Optional[DataFrame] = None) -> LoadResult:
         """
         Method to load the referenced data into the database specified by the ini file
 
@@ -100,11 +100,15 @@ class DataLoader:
             print("Getting Column Stats")
             result = self.analyze_data(dialect)
             if result.code != 1:
-                return -1
+                return LoadResult(-1, f"Error while analyzing file. {result.message}")
             column_stats = result.column_stats
             print("Done getting Column Stats")
         if any([c not in column_stats.columns for c in columns_needed]):
-            return -3
+            return LoadResult(
+                -2,
+                "Column stats provided or generated did not have the columns/data needed to load "
+                "the file "
+            )
         data_types = list(map(
             lambda x: f"{x[0]} {x[1]}",
             column_stats.set_index("Column Name Formatted")["Column Type"].items()
@@ -137,8 +141,7 @@ class DataLoader:
                 cursor.execute(f"DROP TABLE {cleaned_table_name}")
                 cursor.execute(create_sql)
             except Exception as ex2:
-                print(ex2)
-                return -5
+                return LoadResult(-5, f"Error trying to drop table that has the same name. {ex2}")
         records_inserted = 0
         start = time.time()
         rows = (row[1].to_list() for row in self.data.iterrows())
@@ -150,4 +153,4 @@ class DataLoader:
         records_inserted += len(self.data.index)
         print(f"Loaded {records_inserted}: Time elapsed = {end - start} seconds")
         connection.commit()
-        return records_inserted
+        return LoadResult(1, "", records_inserted)

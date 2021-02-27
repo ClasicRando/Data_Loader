@@ -45,6 +45,13 @@ class AnalyzeResult:
     column_stats: DataFrame = DataFrame()
 
 
+@dataclass
+class LoadResult:
+    code: int
+    message: str
+    num_records: int = -1
+
+
 def get_db_connection(ini_path: str, ini_section: str) -> Any:
     """
     Gets a database connection object based upon the details in the ini file specified
