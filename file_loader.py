@@ -15,6 +15,7 @@ class FileLoader:
     def __init__(self,
                  file_path: str,
                  file_type: str,
+                 table_exists: str = "error",
                  value_convert: Optional[Callable[[Any], str]] = None,
                  **kwargs):
         """
@@ -27,6 +28,13 @@ class FileLoader:
         file_type : str
             category of data file passed. Currently supported types are: 1) FLAT (.txt,
             .csv, .tsv, etc.) 2) ACCDB (.accdb and .mdb) 3) DBF (.dbf) 4) XLSX (.xlsx)
+        table_exists : str (Default 'error')
+            action to perform when trying to load the data but the already table exists. Can be:
+            'drop' - drop the table if it exists
+            'append' - add the data. Will raise an error if the columns do not match exactly
+            'truncate' - truncate the table's records. Will raise an error if new data does not
+                match the columns exactly. This is not supported for SQLite databases
+            'error' - if the table already exists return the LoadResult with an error message
         value_convert : (Optional) if the user wants to specify how values are to be converted
             to string objects to be inserted into the DB, they can do so here. The expected format
             is '(Any) -> str' as to account for Pandas inferring data types but always converting
@@ -53,6 +61,12 @@ class FileLoader:
         """
         self.path = abspath(file_path)
         self.file_type = file_type
+        self.table_exits = table_exists
+        if self.table_exits not in ["append", "drop", "truncate", "error"]:
+            raise Exception(
+                "Table_exists parameter does not match the intended input."
+                "Please consult docs to provide the right action or don't pass the parameter"
+            )
         self.encoding = "utf8"
         self.chunk_size = kwargs["chunk_size"] if "chunk_size" in kwargs else 10000
         if self.file_type == "FLAT":
@@ -281,12 +295,33 @@ class FileLoader:
         try:
             cursor.execute(create_sql)
         except Exception as ex:
-            print(ex)
-            try:
-                cursor.execute(f"DROP TABLE {cleaned_table_name}")
-                cursor.execute(create_sql)
-            except Exception as ex2:
-                return LoadResult(-5, f"Error trying to drop table that has the same name. {ex2}")
+            if self.table_exits == "error":
+                return LoadResult(
+                    -5,
+                    f"Table already exists and table_exists was set to error {ex}"
+                )
+            elif self.table_exits == "drop":
+                try:
+                    cursor.execute(f"DROP TABLE {cleaned_table_name}")
+                    cursor.execute(create_sql)
+                except Exception as ex2:
+                    return LoadResult(-5, f"Error trying to drop table. {ex2}")
+            elif self.table_exits == "append":
+                return LoadResult(
+                    -5,
+                    f"Error trying to append to existing table. "
+                    f"Columns must be different in name or type."
+                )
+            elif self.table_exits == "truncate":
+                if dialect == "SQLITE":
+                    return LoadResult(-5, "Truncate not supported by SQLITE")
+                else:
+                    command_sql = f"TRUNCATE TABLE {cleaned_table_name}"
+                try:
+                    cursor.execute(command_sql)
+                except Exception as ex2:
+                    return LoadResult(-5, f"Error trying to truncate table. {ex2}")
+
         records_inserted = 0
         for i, df in enumerate(data):
             start = time.time()
