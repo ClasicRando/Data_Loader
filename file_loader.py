@@ -1,10 +1,8 @@
 from pandas import DataFrame, read_excel, read_sql, read_csv, Series, merge
 from typing import Generator, Callable, Any, Optional
-from dbfread.dbf import DBF
 from sqlalchemy import create_engine
-import urllib
 from util import (clean_column_name, clean_table_name, find_encoding, len_b_str, get_db_connection,
-                  dialect_to_col_type, convert_column, AnalyzeResult, columns_needed)
+                  dialect_to_col_type, convert_column, AnalyzeResult, columns_needed, read_dbf)
 from functools import partial
 from psycopg2 import extras
 import time
@@ -42,19 +40,20 @@ class FileLoader:
             Defaults to False
         encoding : str
             encoding of the text file or DBF. Defaults to 'utf8' and falls back on 'cp1252' if not
-            'utf8'
+            'utf8'. To improve performance (since the whole file needs to be read to infer encoding)
+            please provide this value if you know it and want to load a text file or DBF
         table_name : str
             name of the table to extract for an access database. Required for ACCDB
         sheet_name : str
             name of the sheet to extract for the excel file. Required for XLSX
         chunk_size : int
-            chunksize parameter used for read_sql and read_csv. Number of records to read into
-            memory at a given time. Only affects your operations if file_type FLAT or ACCDB
+            Number of records to read into memory at a given time. Does not affect operations of
+            Excel files since chunking is not supported
         """
         self.path = abspath(file_path)
         self.file_type = file_type
         self.encoding = "utf8"
-        self.chunk_size = 10000
+        self.chunk_size = kwargs["chunk_size"] if "chunk_size" in kwargs else 10000
         if self.file_type == "FLAT":
             self.separator = kwargs["separator"] if "separator" in kwargs else ","
             self.qualifier = kwargs["qualifier"] if "qualifier" in kwargs else False
@@ -62,7 +61,6 @@ class FileLoader:
                 self.encoding = kwargs["encoding"]
             else:
                 self.encoding = find_encoding(self.path, self.file_type)
-            self.chunk_size = kwargs["chunk_size"] if "chunk_size" in kwargs else 10000
         elif self.file_type == "ACCDB":
             if "table_name" in kwargs:
                 self.table_name = kwargs["table_name"]
@@ -71,7 +69,6 @@ class FileLoader:
                     "table_name in access file was not passed as keyword argument."
                     "Please pass a table name from the accdb to continue"
                 )
-            self.chunk_size = kwargs["chunk_size"] if "chunk_size" in kwargs else 10000
         elif self.file_type == "DBF":
             if "encoding" in kwargs:
                 self.encoding = kwargs["encoding"]
@@ -128,7 +125,7 @@ class FileLoader:
             )
         elif self.file_type == "ACCDB":
             conn_str = "Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=" + self.path
-            conn_uri = f"access+pyodbc:///?odbc_connect={urllib.parse.quote_plus(conn_str)}"
+            conn_uri = f"access+pyodbc:///?odbc_connect={conn_str}"
             accdb_engine = create_engine(conn_uri)
             data = read_sql(
                 f"select * from {self.table_name}",
@@ -136,7 +133,11 @@ class FileLoader:
                 chunksize=self.chunk_size
             )
         elif self.file_type == "DBF":
-            data = DataFrame(iter(DBF(self.path, encoding=self.encoding)))
+            data = read_dbf(
+                self.path,
+                self.encoding,
+                self.chunk_size
+            )
         elif self.file_type == "XLSX":
             data = read_excel(
                 self.path,
@@ -174,7 +175,7 @@ class FileLoader:
         b_min_len: Series = Series()
         num_records = 0
         try:
-            for df in self.get_data():
+            for i, df in enumerate(self.get_data()):
                 num_records += len(df.index)
                 b_lens = df.applymap(len_b_str)
                 if b_max_len.empty:
@@ -183,6 +184,7 @@ class FileLoader:
                 else:
                     b_max_len = b_max_len.combine(b_lens.max(), max)
                     b_min_len = b_max_len.combine(b_lens.min(), min)
+                print(f"Done analyzing Chunk {i + 1}")
         except Exception as ex:
             print(ex)
             return AnalyzeResult(-1)
