@@ -48,8 +48,7 @@ class DataLoader:
             b_max_len = b_lens.max()
             b_min_len = b_lens.min()
         except Exception as ex:
-            print(ex)
-            return AnalyzeResult(-1)
+            return AnalyzeResult(-1, f"Error {ex} while analyzing DataFrame")
         b_min_len.name = "Min Len"
         df = merge(
             DataFrame(
@@ -62,7 +61,7 @@ class DataLoader:
         )
         df["Column Name Formatted"] = df.index.map(clean_column_name)
         df["Column Type"] = df["Max Len"].map(dialect_to_col_type[dialect.upper()])
-        return AnalyzeResult(1, num_records, df)
+        return AnalyzeResult(1, "", num_records, df)
 
     def load_data(
             self,

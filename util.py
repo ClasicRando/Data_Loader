@@ -40,6 +40,7 @@ columns_needed = ["Max Len", "Min Len", "Column Name Formatted", "Column Type"]
 @dataclass
 class AnalyzeResult:
     code: int
+    message: str
     num_records: int = -1
     column_stats: DataFrame = DataFrame()
 

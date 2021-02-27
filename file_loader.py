@@ -186,8 +186,7 @@ class FileLoader:
                     b_min_len = b_max_len.combine(b_lens.min(), min)
                 print(f"Done analyzing Chunk {i + 1}")
         except Exception as ex:
-            print(ex)
-            return AnalyzeResult(-1)
+            return AnalyzeResult(-1, f"Error {ex} while analyzing file")
         b_min_len.name = "Min Len"
         df = merge(
             DataFrame(
@@ -200,7 +199,7 @@ class FileLoader:
         )
         df["Column Name Formatted"] = df.index.map(clean_column_name)
         df["Column Type"] = df["Max Len"].map(dialect_to_col_type[dialect.upper()])
-        return AnalyzeResult(1, num_records, df)
+        return AnalyzeResult(1, "", num_records, df)
 
     def load_file(
             self,
