@@ -142,9 +142,6 @@ class DataLoader:
                 return -5
         records_inserted = 0
         start = time.time()
-        end = time.time()
-        print(f"Data prep: Time elapsed = {end - start} seconds")
-        start = time.time()
         rows = (row[1].to_list() for row in self.data.iterrows())
         if dialect == "POSTGRESQL":
             extras.execute_values(cursor, insert_sql, rows)
