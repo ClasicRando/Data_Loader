@@ -61,7 +61,7 @@ class FileLoader:
             if "encoding" in kwargs:
                 self.encoding = kwargs["encoding"]
             else:
-                find_encoding(self.path, self.file_type)
+                self.encoding = find_encoding(self.path, self.file_type)
             self.chunk_size = kwargs["chunk_size"] if "chunk_size" in kwargs else 10000
         elif self.file_type == "ACCDB":
             if "table_name" in kwargs:
@@ -76,7 +76,7 @@ class FileLoader:
             if "encoding" in kwargs:
                 self.encoding = kwargs["encoding"]
             else:
-                find_encoding(self.path, self.file_type)
+                self.encoding = find_encoding(self.path, self.file_type)
         elif self.file_type == "XLSX":
             if "sheet_name" in kwargs:
                 self.sheet_name = kwargs["sheet_name"]
