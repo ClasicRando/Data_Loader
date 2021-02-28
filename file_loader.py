@@ -3,7 +3,7 @@ from typing import Generator, Callable, Any, Optional
 from sqlalchemy import create_engine
 from util import (clean_column_name, clean_table_name, find_encoding, len_b_str, get_db_connection,
                   dialect_to_col_type, convert_column, AnalyzeResult, columns_needed, read_dbf,
-                  LoadResult)
+                  LoadResult, check_conflicting_column_info)
 from functools import partial
 from psycopg2 import extras
 import time
@@ -15,6 +15,8 @@ class FileLoader:
     def __init__(self,
                  file_path: str,
                  file_type: str,
+                 ini_path: str,
+                 db_dialect: str,
                  table_exists: str = "error",
                  value_convert: Optional[Callable[[Any], str]] = None,
                  **kwargs):
@@ -26,19 +28,31 @@ class FileLoader:
         file_path : str
             Path to a data file as a string
         file_type : str
-            category of data file passed. Currently supported types are: 1) FLAT (.txt,
+            Category of data file passed. Currently supported types are: 1) FLAT (.txt,
             .csv, .tsv, etc.) 2) ACCDB (.accdb and .mdb) 3) DBF (.dbf) 4) XLSX (.xlsx)
+        ini_path : str
+            Path to the ini file contains the database credentials
+        db_dialect : str
+            Database dialect that is to be used for loading the data. Dictates the column types
+            NOTE: This values has to match the ini section header used.
+            Only dialects currently supported are:
+                1) Postgresql
+                2) Oracle
+                3) MySQL
+                4) SQL Server
+                5) SQLite
         table_exists : str (Default 'error')
-            action to perform when trying to load the data but the already table exists. Can be:
+            Action to perform when trying to load the data but the already table exists. Can be:
             'drop' - drop the table if it exists
             'append' - add the data. Will raise an error if the columns do not match exactly
             'truncate' - truncate the table's records. Will raise an error if new data does not
                 match the columns exactly. This is not supported for SQLite databases
             'error' - if the table already exists return the LoadResult with an error message
-        value_convert : (Optional) if the user wants to specify how values are to be converted
-            to string objects to be inserted into the DB, they can do so here. The expected format
-            is '(Any) -> str' as to account for Pandas inferring data types but always converting
-            the DataFrame elements to string objects
+        value_convert : (Optional)
+            if the user wants to specify how values are to be converted to string objects to be
+            inserted into the DB, they can do so here. The expected format is '(Any) -> str' as to
+            account for Pandas inferring data types but always converting the DataFrame elements to
+            string objects
 
         Keyword arguments
         -----------------
@@ -61,6 +75,8 @@ class FileLoader:
         """
         self.path = abspath(file_path)
         self.file_type = file_type
+        self.ini_path = ini_path
+        self.db_dialect = db_dialect
         self.table_exits = table_exists
         if self.table_exits not in ["append", "drop", "truncate", "error"]:
             raise Exception(
@@ -167,20 +183,9 @@ class FileLoader:
             for df in data:
                 yield df.fillna("").applymap(self.convert_column)
 
-    def analyze_file(self, dialect: str) -> AnalyzeResult:
+    def analyze_file(self) -> AnalyzeResult:
         """
         Method to analyze the given file/data and produce column stats as well as loading parameters
-
-        Parameters
-        ----------
-        dialect : str
-            database dialect that is to be used for loading the data. Dictates the column types
-            Only dialects currently supported are:
-                1) Postgresql
-                2) Oracle
-                3) MySQL
-                4) SQL Server
-                5) SQLite
 
         Returns
         -------
@@ -213,13 +218,11 @@ class FileLoader:
             right_index=True
         )
         df["Column Name Formatted"] = df.index.map(clean_column_name)
-        df["Column Type"] = df["Max Len"].map(dialect_to_col_type[dialect.upper()])
+        df["Column Type"] = df["Max Len"].map(dialect_to_col_type[self.db_dialect.upper()])
         return AnalyzeResult(1, "", num_records, df)
 
     def load_file(
             self,
-            ini_path: str,
-            ini_section: str,
             table_name: str,
             column_stats: Optional[DataFrame] = None) -> LoadResult:
         """
@@ -227,11 +230,6 @@ class FileLoader:
 
         Parameters
         ----------
-        ini_path : str
-            path to the ini file contains the database credentials
-        ini_section : str
-            section header name of the ini to be used for the database connection. This is assumed
-            to also be the database dialect
         table_name : str
             name used when inserting the records into the database
         column_stats : Optional[DataFrame]
@@ -245,13 +243,13 @@ class FileLoader:
         -------
         Number of records inserted. A negative result means an error occurred
         """
-        dialect = ini_section.upper()
-        connection = get_db_connection(ini_path, ini_section)
+        dialect = self.db_dialect.upper()
+        connection = get_db_connection(self.ini_path, self.db_dialect)
         cursor = connection.cursor()
         cleaned_table_name = clean_table_name(table_name)
         if column_stats is None:
             print("Getting Column Stats")
-            result = self.analyze_file(dialect)
+            result = self.analyze_file()
             if result.code != 1:
                 return LoadResult(-1, f"Error while analyzing file. {result.message}")
             column_stats = result.column_stats
@@ -307,11 +305,12 @@ class FileLoader:
                 except Exception as ex2:
                     return LoadResult(-5, f"Error trying to drop table. {ex2}")
             elif self.table_exits == "append":
-                return LoadResult(
-                    -5,
-                    f"Error trying to append to existing table. "
-                    f"Columns must be different in name or type."
-                )
+                if check_conflicting_column_info(cursor, self.db_dialect, table_name, column_stats):
+                    return LoadResult(
+                        -5,
+                        f"Error trying to append to existing table. "
+                        f"Columns must be different in name or type."
+                    )
             elif self.table_exits == "truncate":
                 if dialect == "SQLITE":
                     return LoadResult(-5, "Truncate not supported by SQLITE")

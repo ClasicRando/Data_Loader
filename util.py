@@ -130,6 +130,59 @@ def get_db_connection(ini_path: str, ini_section: str) -> Any:
         raise Exception("Database Dialect misspelled or not supported")
 
 
+def check_conflicting_column_info(
+        cursor,
+        db_dialect: str,
+        table_name: str,
+        column_stats: DataFrame) -> bool:
+    check_query = ""
+    parameters = []
+    if db_dialect.upper() == "POSTGRESQL":
+        check_query = "select upper(column_name), upper(data_type) " \
+                      "from   information_schema.columns " \
+                      "where  table_name = %s"
+        parameters = [table_name.lower()]
+    elif db_dialect.upper() == "ORACLE":
+        check_query = "select upper(column_name), upper(data_type) " \
+                      "from   sys.all_tab_columns " \
+                      "where  table_name = :1"
+        parameters = [table_name.upper()]
+    elif db_dialect.upper() == "SQLSERVER":
+        check_query = "select upper(column_name), " \
+                      "       upper(concat(data_type,'(',character_maximum_length,')')) " \
+                      "from   information_schema.columns " \
+                      "where  table_name = ?"
+        parameters = [table_name.upper()]
+    elif db_dialect.upper() == "MYSQL":
+        check_query = f"show columns from {table_name.upper()}"
+    elif db_dialect.upper() == "SQLITE":
+        check_query = "select upper(name), upper(type) " \
+                      "from   PRAGMA_table_info(?)"
+        parameters = [table_name.upper()]
+    cursor.execute(check_query, parameters)
+    lookup_stats = DataFrame(
+        (
+            (
+                row[0].upper(),
+                row[1].decode("utf8").upper() if isinstance(row[1], bytes) else row[1].upper()
+            )
+            for row in cursor.fetchall()
+        ),
+        columns=["Column Name", "Data Type"]
+    )
+    df = column_stats.merge(
+        right=lookup_stats,
+        how="outer",
+        left_on="Column Name Formatted",
+        right_on="Column Name"
+    ).loc[:, ["Column Name Formatted", "Column Name", "Column Type", "Data Type"]].fillna("")
+    differences: DataFrame = (
+        df.loc[df["Column Name Formatted"] != df["Column Name"]]
+        .append(df.loc[df["Data Type"] != df["Column Type"]])
+    )
+    return not differences.empty
+
+
 def read_dbf(path: str, encoding: str, chunk_size: int) -> Generator[DataFrame, None, None]:
     """
     Reads a DBF file and returns chunks of the file as DataFrames

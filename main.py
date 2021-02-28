@@ -9,14 +9,14 @@ start = time.time()
 #     "ACCDB",
 #     table_name="tbAllRegUSTs"
 # )
-fa = FileLoader("sample files/tblAllTanks.txt", "FLAT", separator=",", qualifier=True, encoding="utf8")
+# fa = FileLoader("sample files/tblAllTanks.txt", "FLAT", separator=",", qualifier=True, encoding="utf8")
 # fa = FileLoader("TCEQ_BROWNFIELDS_POINTS.dbf", "DBF")
-result = fa.analyze_file("postgresql")
-if result.code == 1:
-    print(result.num_records)
-    print(result.column_stats)
-else:
-    print(result.code)
+# result = fa.analyze_file()
+# if result.code == 1:
+#     print(result.num_records)
+#     print(result.column_stats)
+# else:
+#     print(result.code)
 # print(fa.load_file("db_config.ini", "postgresql", "TANK_NC_TBLALLTANKS"))
 end = time.time()
 print(f"Time elapsed = {end - start} seconds")
