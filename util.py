@@ -1,4 +1,4 @@
-from typing import List, Callable, Any
+from typing import List, Callable, Any, Generator
 from dbfread.dbf import DBF
 import re
 from datetime import datetime, date
@@ -33,14 +33,23 @@ table_name_clean_ops: List[Callable] = [
     lambda x: re.sub(r"^(\d)", r"A\1", x)
 ]
 connection_parameters = ["host", "user", "password", "dbname"]
+oracle_conn_parameters = ["host", "user", "password", "service"]
 columns_needed = ["Max Len", "Min Len", "Column Name Formatted", "Column Type"]
 
 
 @dataclass
 class AnalyzeResult:
     code: int
+    message: str
     num_records: int = -1
     column_stats: DataFrame = DataFrame()
+
+
+@dataclass
+class LoadResult:
+    code: int
+    message: str
+    num_records: int = -1
 
 
 def get_db_connection(ini_path: str, ini_section: str) -> Any:
@@ -69,17 +78,23 @@ def get_db_connection(ini_path: str, ini_section: str) -> Any:
     db_credentials = config[ini_section]
     section = ini_section.upper()
 
+    # Check to make sure the credentials provided are sufficient to create a connection object
     if section == "SQLITE":
         if "host" not in db_credentials:
             raise KeyError(f"DB parameter needed (host) is not available in the INI file")
     else:
-        missing_credentials = [p for p in connection_parameters if p not in db_credentials]
+        if section in ["SQLSERVER", "MYSQL", "POSTGRESQL"]:
+            missing_credentials = [p for p in connection_parameters if p not in db_credentials]
+        else:
+            missing_credentials = [p for p in oracle_conn_parameters if p not in db_credentials]
         if missing_credentials:
             raise KeyError(
                 f"DB parameter(s) needed ({','.join(missing_credentials)}) "
                 f"are not available in the INI file"
             )
 
+    # Depending upon the dialect passed into this function, it will produce a different connection
+    # object that is obtained from a DB's preferred library
     if section == "POSTGRESQL":
         return psycopg2.connect(
             f"host={db_credentials['host']} user={db_credentials['user']} "
@@ -115,11 +130,100 @@ def get_db_connection(ini_path: str, ini_section: str) -> Any:
         raise Exception("Database Dialect misspelled or not supported")
 
 
+def check_conflicting_column_info(
+        cursor,
+        db_dialect: str,
+        table_name: str,
+        column_stats: DataFrame) -> bool:
+    check_query = ""
+    parameters = []
+    if db_dialect.upper() == "POSTGRESQL":
+        check_query = "select upper(column_name), upper(data_type) " \
+                      "from   information_schema.columns " \
+                      "where  table_name = %s"
+        parameters = [table_name.lower()]
+    elif db_dialect.upper() == "ORACLE":
+        check_query = "select upper(column_name), upper(data_type) " \
+                      "from   sys.all_tab_columns " \
+                      "where  table_name = :1"
+        parameters = [table_name.upper()]
+    elif db_dialect.upper() == "SQLSERVER":
+        check_query = "select upper(column_name), " \
+                      "       upper(concat(data_type,'(',character_maximum_length,')')) " \
+                      "from   information_schema.columns " \
+                      "where  table_name = ?"
+        parameters = [table_name.upper()]
+    elif db_dialect.upper() == "MYSQL":
+        check_query = f"show columns from {table_name.upper()}"
+    elif db_dialect.upper() == "SQLITE":
+        check_query = "select upper(name), upper(type) " \
+                      "from   PRAGMA_table_info(?)"
+        parameters = [table_name.upper()]
+    cursor.execute(check_query, parameters)
+    lookup_stats = DataFrame(
+        (
+            (
+                row[0].upper(),
+                row[1].decode("utf8").upper() if isinstance(row[1], bytes) else row[1].upper()
+            )
+            for row in cursor.fetchall()
+        ),
+        columns=["Column Name", "Data Type"]
+    )
+    df = column_stats.merge(
+        right=lookup_stats,
+        how="outer",
+        left_on="Column Name Formatted",
+        right_on="Column Name"
+    ).loc[:, ["Column Name Formatted", "Column Name", "Column Type", "Data Type"]].fillna("")
+    differences: DataFrame = (
+        df.loc[df["Column Name Formatted"] != df["Column Name"]]
+        .append(df.loc[df["Data Type"] != df["Column Type"]])
+    )
+    return not differences.empty
+
+
+def read_dbf(path: str, encoding: str, chunk_size: int) -> Generator[DataFrame, None, None]:
+    """
+    Reads a DBF file and returns chunks of the file as DataFrames
+
+    Parameters
+    ----------
+    path : str
+        path to the DBF file to be read as DataFrames
+    encoding : str
+        encoding name to read the DBF
+    chunk_size : int
+        max size of the DataFrame to be generated. Limits too many records in memory at one time
+    Returns
+    -------
+    Generated DataFrames as chunks of the DBF to be loaded/analyzed
+    """
+    with DBF(path, encoding=encoding) as dbf:
+        records = []
+        record_num = 0
+        for record in dbf:
+            records.append(record)
+            record_num += 1
+            # Once the chunk limit has been reached, yield back the DataFrame and then clear the
+            # records list and reset the counter
+            if record_num == chunk_size:
+                yield DataFrame(records)
+                records = []
+                record_num = 0
+        # If any records are still in the list, yield the remaining records
+        if records:
+            yield DataFrame(records)
+
+
 def find_encoding(path: str, file_type: str) -> str:
     """
     Tries to read the given file with 'utf8' then 'cp1252' to find the encoding
 
-    If both encoding types raise a UnicodeDecodeError then the function raise an Exception
+    DBF files can have a shortcut if the language driver byte can be found in the header. In those
+    cases we can infer utf8 or cp1252 much more easily without reading all records. If the byte
+    cannot be decoded or found, it defaults to reading all records to find encoding. If both
+    encoding types raise a UnicodeDecodeError then the function raise an Exception
 
     Parameters
     ----------
@@ -131,6 +235,11 @@ def find_encoding(path: str, file_type: str) -> str:
     -------
     'utf8' or 'cp1252' depending on the encoding of the file
     """
+    if file_type == "DBF":
+        with DBF(path, encoding="utf8") as dbf:
+            encoding = dbf.encoding
+        if encoding in ["utf8", "cp1252"]:
+            return encoding
     i = 0
     try:
         if file_type == "FLAT":
@@ -138,29 +247,31 @@ def find_encoding(path: str, file_type: str) -> str:
                 for i, _ in enumerate(f):
                     pass
         elif file_type == "DBF":
-            for i, _ in enumerate(DBF(path, encoding="utf8")):
-                pass
+            with DBF(path, encoding="utf8") as dbf:
+                for i, _ in enumerate(dbf):
+                    pass
         return "utf8"
     except UnicodeDecodeError as ex:
         print(
             f"{ex} for {'line' if file_type == 'FLAT' else 'record'} {i + 1}."
             "Moving to CP1252 encoding"
         )
-        try:
-            if file_type == "FLAT":
-                with open(path, mode="r", encoding="cp1252") as f:
-                    for i, _ in enumerate(f):
-                        pass
-            elif file_type == "DBF":
-                for i, _ in enumerate(DBF(path, encoding="cp1252")):
+    try:
+        if file_type == "FLAT":
+            with open(path, mode="r", encoding="cp1252") as f:
+                for i, _ in enumerate(f):
                     pass
-            return "cp1252"
-        except UnicodeDecodeError as ex2:
-            print(f"{ex2} for {'line' if file_type == 'FLAT' else 'record'} {i + 1}")
-            raise Exception(
-                "Could not infer encoding of the file. Please input the encoding as a keyword"
-                "argument to the FileLoader constructor"
-            )
+        elif file_type == "DBF":
+            with DBF(path, encoding="cp1252") as dbf:
+                for i, _ in enumerate(dbf):
+                    pass
+        return "cp1252"
+    except UnicodeDecodeError as ex2:
+        print(f"{ex2} for {'line' if file_type == 'FLAT' else 'record'} {i + 1}")
+        raise Exception(
+            "Could not infer encoding of the file. Please input the encoding as a keyword"
+            "argument to the FileLoader constructor"
+        )
 
 
 def clean_column_name(column_name: str) -> str:
