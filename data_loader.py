@@ -1,41 +1,57 @@
 from pandas import DataFrame, merge
 from typing import Optional, Callable, Any
 from util import (utf8_convert, AnalyzeResult, len_b_str, clean_column_name, dialect_to_col_type,
-                  get_db_connection, clean_table_name, columns_needed, LoadResult)
+                  get_db_connection, clean_table_name, columns_needed, LoadResult,
+                  check_conflicting_column_info)
 import time
 from psycopg2 import extras
 
 
 class DataLoader:
 
-    def __init__(self, data: DataFrame, value_convert: Optional[Callable[[Any], str]] = None):
+    def __init__(self,
+                 data: DataFrame,
+                 ini_path: str,
+                 db_dialect: str,
+                 table_exists: str = "error",
+                 value_convert: Optional[Callable[[Any], str]] = None):
         """
         Creates a DataLoader object to assist in the insertion of a DataFrame into a DB
 
         Parameters
         ----------
+        ini_path : str
+            Path to the ini file contains the database credentials
+        db_dialect : str
+            Database dialect that is to be used for loading the data. Dictates the column types
+            NOTE: This value has to match the ini section header used.
+            Only dialects currently supported are (with the expected ini section name after):
+                1) Postgresql - postgresql
+                2) Oracle - oracle
+                3) MySQL - mysql
+                4) SQL Server - sqlserver
+                5) SQLite - sqlite
+        table_exists : str (Default 'error')
+            Action to perform when trying to load the data but the already table exists. Can be:
+            'drop' - drop the table if it exists
+            'append' - add the data. Will raise an error if the columns do not match exactly
+            'truncate' - truncate the table's records. Will raise an error if new data does not
+                match the columns exactly. This is not supported for SQLite databases
+            'error' - if the table already exists return the LoadResult with an error message
         value_convert : (Optional) if the user wants to specify how values are to be converted
             to string objects to be inserted into the DB, they can do so here. The expected format
             is '(Any) -> str' as to account for Pandas inferring data types but always converting
             the DataFrame elements to string objects
         """
         self.data = data
+        self.ini_path = ini_path
+        self.db_dialect = db_dialect
+        self.table_exits = table_exists
         self.value_convert = value_convert if value_convert is not None else utf8_convert
 
-    def analyze_data(self, dialect: str) -> AnalyzeResult:
+    def analyze_data(self) -> AnalyzeResult:
         """
         Method to analyze the given data and produce column stats as well as loading parameters
-
-        Parameters
-        ----------
-        dialect : str
-            database dialect that is to be used for loading the data. Dictates the column types
-            Only dialects currently supported are:
-                1) Postgresql
-                2) Oracle
-                3) MySQL
-                4) SQL Server
-                5) SQLite
 
         Returns
         -------
@@ -60,13 +76,11 @@ class DataLoader:
             right_index=True
         )
         df["Column Name Formatted"] = df.index.map(clean_column_name)
-        df["Column Type"] = df["Max Len"].map(dialect_to_col_type[dialect.upper()])
+        df["Column Type"] = df["Max Len"].map(dialect_to_col_type[self.db_dialect.upper()])
         return AnalyzeResult(1, "", num_records, df)
 
     def load_data(
             self,
-            ini_path: str,
-            ini_section: str,
             table_name: str,
             column_stats: Optional[DataFrame] = None) -> LoadResult:
         """
@@ -74,11 +88,6 @@ class DataLoader:
 
         Parameters
         ----------
-        ini_path : str
-            path to the ini file contains the database credentials
-        ini_section : str
-            section header name of the ini to be used for the database connection. This is assumed
-            to also be the database dialect
         table_name : str
             name used when inserting the records into the database
         column_stats : Optional[DataFrame]
@@ -92,13 +101,13 @@ class DataLoader:
         -------
         Number of records inserted. A negative result means an error occurred
         """
-        dialect = ini_section.upper()
-        connection = get_db_connection(ini_path, ini_section)
+        dialect = self.db_dialect.upper()
+        connection = get_db_connection(self.ini_path, self.db_dialect)
         cursor = connection.cursor()
         cleaned_table_name = clean_table_name(table_name)
         if column_stats is None:
             print("Getting Column Stats")
-            result = self.analyze_data(dialect)
+            result = self.analyze_data()
             if result.code != 1:
                 return LoadResult(-1, f"Error while analyzing file. {result.message}")
             column_stats = result.column_stats
@@ -136,12 +145,40 @@ class DataLoader:
         try:
             cursor.execute(create_sql)
         except Exception as ex:
-            print(ex)
-            try:
-                cursor.execute(f"DROP TABLE {cleaned_table_name}")
-                cursor.execute(create_sql)
-            except Exception as ex2:
-                return LoadResult(-5, f"Error trying to drop table that has the same name. {ex2}")
+            if self.table_exits == "error":
+                return LoadResult(
+                    -5,
+                    f"Table already exists and table_exists was set to error {ex}"
+                )
+            elif self.table_exits == "drop":
+                try:
+                    cursor.execute(f"DROP TABLE {cleaned_table_name}")
+                    cursor.execute(create_sql)
+                except Exception as ex2:
+                    return LoadResult(-5, f"Error trying to drop table. {ex2}")
+            elif self.table_exits == "append":
+                if check_conflicting_column_info(cursor, self.db_dialect, table_name, column_stats):
+                    return LoadResult(
+                        -5,
+                        f"Error trying to append to existing table. "
+                        f"Columns cannot be different in name or type."
+                    )
+            elif self.table_exits == "truncate":
+                if check_conflicting_column_info(cursor, self.db_dialect, table_name, column_stats):
+                    return LoadResult(
+                        -5,
+                        f"Error trying to truncate existing table. "
+                        f"Columns cannot be different in name or type."
+                    )
+                if dialect == "SQLITE":
+                    return LoadResult(-5, "Truncate not supported by SQLITE")
+                else:
+                    command_sql = f"TRUNCATE TABLE {cleaned_table_name}"
+                try:
+                    cursor.execute(command_sql)
+                except Exception as ex2:
+                    return LoadResult(-5, f"Error trying to truncate table. {ex2}")
+
         records_inserted = 0
         start = time.time()
         rows = (row[1].to_list() for row in self.data.iterrows())
