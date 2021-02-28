@@ -34,13 +34,13 @@ class FileLoader:
             Path to the ini file contains the database credentials
         db_dialect : str
             Database dialect that is to be used for loading the data. Dictates the column types
-            NOTE: This values has to match the ini section header used.
-            Only dialects currently supported are:
-                1) Postgresql
-                2) Oracle
-                3) MySQL
-                4) SQL Server
-                5) SQLite
+            NOTE: This value has to match the ini section header used.
+            Only dialects currently supported are (with the expected ini section name after):
+                1) Postgresql - postgresql
+                2) Oracle - oracle
+                3) MySQL - mysql
+                4) SQL Server - sqlserver
+                5) SQLite - sqlite
         table_exists : str (Default 'error')
             Action to perform when trying to load the data but the already table exists. Can be:
             'drop' - drop the table if it exists
@@ -309,9 +309,15 @@ class FileLoader:
                     return LoadResult(
                         -5,
                         f"Error trying to append to existing table. "
-                        f"Columns must be different in name or type."
+                        f"Columns cannot be different in name or type."
                     )
             elif self.table_exits == "truncate":
+                if check_conflicting_column_info(cursor, self.db_dialect, table_name, column_stats):
+                    return LoadResult(
+                        -5,
+                        f"Error trying to truncate existing table. "
+                        f"Columns cannot be different in name or type."
+                    )
                 if dialect == "SQLITE":
                     return LoadResult(-5, "Truncate not supported by SQLITE")
                 else:
