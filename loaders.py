@@ -8,6 +8,7 @@ from functools import partial
 from psycopg2 import extras
 import time
 from os.path import abspath
+import urllib
 
 
 class FileLoader:
@@ -156,7 +157,7 @@ class FileLoader:
             )
         elif self.file_type == "ACCDB":
             conn_str = "Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=" + self.path
-            conn_uri = f"access+pyodbc:///?odbc_connect={conn_str}"
+            conn_uri = f"access+pyodbc:///?odbc_connect={urllib.parse.quote_plus(conn_str)}"
             accdb_engine = create_engine(conn_uri)
             data = read_sql(
                 f"select * from {self.table_name}",
