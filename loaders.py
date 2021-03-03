@@ -16,7 +16,7 @@ class FileLoader:
     def __init__(self,
                  file_path: str,
                  file_type: str,
-                 ini_path: str,
+                 json_path: str,
                  db_dialect: str,
                  table_exists: str = "error",
                  value_convert: Optional[Callable[[Any], str]] = None,
@@ -31,8 +31,8 @@ class FileLoader:
         file_type : str
             Category of data file passed. Currently supported types are: 1) FLAT (.txt,
             .csv, .tsv, etc.) 2) ACCDB (.accdb and .mdb) 3) DBF (.dbf) 4) XLSX (.xlsx)
-        ini_path : str
-            Path to the ini file contains the database credentials
+        json_path : str
+            Path to the json file contains the database credentials
         db_dialect : str
             Database dialect that is to be used for loading the data. Dictates the column types
             NOTE: This value has to match the ini section header used.
@@ -76,7 +76,7 @@ class FileLoader:
         """
         self.path = abspath(file_path)
         self.file_type = file_type
-        self.ini_path = ini_path
+        self.json_path = json_path
         self.db_dialect = db_dialect
         self.table_exits = table_exists
         if self.table_exits not in ["append", "drop", "truncate", "error"]:
@@ -245,7 +245,7 @@ class FileLoader:
         Number of records inserted. A negative result means an error occurred
         """
         dialect = self.db_dialect.upper()
-        connection = get_db_connection(self.ini_path, self.db_dialect)
+        connection = get_db_connection(self.json_path, self.db_dialect)
         cursor = connection.cursor()
         cleaned_table_name = clean_table_name(table_name)
         if column_stats is None:
@@ -350,7 +350,7 @@ class DataLoader:
 
     def __init__(self,
                  data: DataFrame,
-                 ini_path: str,
+                 json_path: str,
                  db_dialect: str,
                  table_exists: str = "error",
                  value_convert: Optional[Callable[[Any], str]] = None):
@@ -359,7 +359,7 @@ class DataLoader:
 
         Parameters
         ----------
-        ini_path : str
+        json_path : str
             Path to the ini file contains the database credentials
         db_dialect : str
             Database dialect that is to be used for loading the data. Dictates the column types
@@ -383,7 +383,7 @@ class DataLoader:
             the DataFrame elements to string objects
         """
         self.data = data
-        self.ini_path = ini_path
+        self.json_path = json_path
         self.db_dialect = db_dialect
         self.table_exits = table_exists
         self.value_convert = value_convert if value_convert is not None else utf8_convert
@@ -441,7 +441,7 @@ class DataLoader:
         Number of records inserted. A negative result means an error occurred
         """
         dialect = self.db_dialect.upper()
-        connection = get_db_connection(self.ini_path, self.db_dialect)
+        connection = get_db_connection(self.json_path, self.db_dialect)
         cursor = connection.cursor()
         cleaned_table_name = clean_table_name(table_name)
         if column_stats is None:

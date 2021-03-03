@@ -6,7 +6,7 @@ from keywords import keywords
 from unidecode import unidecode
 from decimal import Decimal
 from numpy import format_float_positional
-from configparser import ConfigParser
+import json
 import psycopg2
 import cx_Oracle as cx
 import pyodbc
@@ -52,7 +52,7 @@ class LoadResult:
     num_records: int = -1
 
 
-def get_db_connection(ini_path: str, ini_section: str) -> Any:
+def get_db_connection(json_path: str, db_dialect: str) -> Any:
     """
     Gets a database connection object based upon the details in the ini file specified
 
@@ -64,26 +64,26 @@ def get_db_connection(ini_path: str, ini_section: str) -> Any:
 
     Parameters
     ----------
-    ini_path : str
+    json_path : str
         string path to the credentials file
-    ini_section :
-        section/header in the ini file to find the db credentials
+    db_dialect :
+        name of database used as a key in the json file to find the db credentials
 
     Returns
     -------
     Connection object
     """
-    config = ConfigParser()
-    config.read(ini_path)
-    db_credentials = config[ini_section]
-    section = ini_section.upper()
+    with open(json_path) as f:
+        data = json.load(f)
+    db_credentials = data[db_dialect]
+    dialect = db_dialect.upper()
 
     # Check to make sure the credentials provided are sufficient to create a connection object
-    if section == "SQLITE":
+    if dialect == "SQLITE":
         if "host" not in db_credentials:
             raise KeyError(f"DB parameter needed (host) is not available in the INI file")
     else:
-        if section in ["SQLSERVER", "MYSQL", "POSTGRESQL"]:
+        if dialect in ["SQLSERVER", "MYSQL", "POSTGRESQL"]:
             missing_credentials = [p for p in connection_parameters if p not in db_credentials]
         else:
             missing_credentials = [p for p in oracle_conn_parameters if p not in db_credentials]
@@ -95,12 +95,12 @@ def get_db_connection(ini_path: str, ini_section: str) -> Any:
 
     # Depending upon the dialect passed into this function, it will produce a different connection
     # object that is obtained from a DB's preferred library
-    if section == "POSTGRESQL":
+    if dialect == "POSTGRESQL":
         return psycopg2.connect(
             f"host={db_credentials['host']} user={db_credentials['user']} "
             f"password={db_credentials['password']} dbname={db_credentials['dbname']}"
         )
-    elif section == "ORACLE":
+    elif dialect == "ORACLE":
         return cx.connect(
             db_credentials['user'],
             db_credentials['password'],
@@ -108,14 +108,14 @@ def get_db_connection(ini_path: str, ini_section: str) -> Any:
             f"{':' + db_credentials['port'] if 'port' in db_credentials else ''}"
             f"/{db_credentials['service']}"
         )
-    elif section == "MYSQL":
+    elif dialect == "MYSQL":
         return mysql_connector.connect(
             host=db_credentials['host'],
             user=db_credentials['user'],
             password=db_credentials['password'],
             database=db_credentials['dbname']
         )
-    elif section == "SQLSERVER":
+    elif dialect == "SQLSERVER":
         return pyodbc.connect(
             "DRIVER={ODBC Driver 17 for SQL Server};"
             f"SERVER={db_credentials['host']}"
@@ -124,7 +124,7 @@ def get_db_connection(ini_path: str, ini_section: str) -> Any:
             f"UID={db_credentials['user']};"
             f"PWD={db_credentials['password']}"
         )
-    elif section == "SQLITE":
+    elif dialect == "SQLITE":
         return sqlite3.connect(db_credentials['host'])
     else:
         raise Exception("Database Dialect misspelled or not supported")
