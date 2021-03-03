@@ -1,35 +1,30 @@
-[
-  {
-    "name": "postgresql",
+{
+  "postgresql": {
     "host": "localhost",
     "user": "user",
     "password": "drowssap",
     "dbname": "test"
   },
-  {
-    "name": "oracle",
+  "oracle": {
     "host": "localhost",
     "user": "user2",
     "password": "123456",
     "service": "service1",
     "port": "69"
   },
-  {
-    "name": "mysql",
+  "mysql": {
     "host": "localhost",
     "user": "user3",
     "password": "helpiamtrapped",
     "dbname": "testdb"
   },
-  {
-    "name": "sqlserver",
+  "sqlserver": {
     "host": "localhost",
     "user": "user4",
     "password": "123456",
     "dbname": "TestDataBase"
   },
-  {
-    "name": "sqlite",
+  "sqlite": {
     "host": "C:\\Path\\To\\DB\\db.sqlite3"
   }
-]
+}
