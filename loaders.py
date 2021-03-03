@@ -1,9 +1,9 @@
 from pandas import DataFrame, read_excel, read_sql, read_csv, Series, merge
-from typing import Generator, Callable, Any, Optional
+from typing import Generator, Callable, Any, Optional, Union
 from sqlalchemy import create_engine
 from util import (clean_column_name, clean_table_name, find_encoding, len_b_str, get_db_connection,
                   dialect_to_col_type, convert_column, AnalyzeResult, columns_needed, read_dbf,
-                  LoadResult, check_conflicting_column_info, utf8_convert)
+                  LoadResult, check_conflicting_column_info, utf8_convert, DbDialect)
 from functools import partial
 from psycopg2 import extras
 import time
@@ -17,7 +17,7 @@ class FileLoader:
                  file_path: str,
                  file_type: str,
                  json_path: str,
-                 db_dialect: str,
+                 db_dialect: Union[str, DbDialect],
                  table_exists: str = "error",
                  value_convert: Optional[Callable[[Any], str]] = None,
                  **kwargs):
@@ -33,10 +33,11 @@ class FileLoader:
             .csv, .tsv, etc.) 2) ACCDB (.accdb and .mdb) 3) DBF (.dbf) 4) XLSX (.xlsx)
         json_path : str
             Path to the json file contains the database credentials
-        db_dialect : str
+        db_dialect : Union[str, DbDialect]
             Database dialect that is to be used for loading the data. Dictates the column types
-            NOTE: This value has to match the ini section header used.
-            Only dialects currently supported are (with the expected ini section name after):
+            If the value is a string, it will try to get the DbDialect Enum. Can raise an exception
+            NOTE: This value has to match the json key used.
+            Only dialects currently supported are (with the expected json key name after):
                 1) Postgresql - postgresql
                 2) Oracle - oracle
                 3) MySQL - mysql
@@ -77,7 +78,7 @@ class FileLoader:
         self.path = abspath(file_path)
         self.file_type = file_type
         self.json_path = json_path
-        self.db_dialect = db_dialect
+        self.db_dialect = DbDialect(db_dialect) if isinstance(db_dialect, str) else db_dialect
         self.table_exits = table_exists
         if self.table_exits not in ["append", "drop", "truncate", "error"]:
             raise Exception(
@@ -244,7 +245,6 @@ class FileLoader:
         -------
         Number of records inserted. A negative result means an error occurred
         """
-        dialect = self.db_dialect.upper()
         connection = get_db_connection(self.json_path, self.db_dialect)
         cursor = connection.cursor()
         cleaned_table_name = clean_table_name(table_name)
@@ -275,19 +275,19 @@ class FileLoader:
         create_sql = f"CREATE TABLE {cleaned_table_name}({','.join(data_types)})"
 
         insert_sql = ""
-        if dialect == "POSTGRESQL":
+        if self.db_dialect == DbDialect.POSTGRESQL:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES %s"
-        elif dialect == "ORACLE":
+        elif self.db_dialect == DbDialect.ORACLE:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join((f':{i + 1}' for i in range(len(column_stats.index))))})"
-        elif dialect == "MYSQL":
+        elif self.db_dialect == DbDialect.MYSQL:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join(('%s' for _ in range(len(column_stats.index))))})"
-        elif dialect == "SQLSERVER":
+        elif self.db_dialect == DbDialect.SQLSERVER:
             cursor.fast_executemany = True
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join(('?' for _ in range(len(column_stats.index))))})"
-        elif dialect == "SQLITE":
+        elif self.db_dialect == DbDialect.SQLITE:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join(('?' for _ in range(len(column_stats.index))))})"
 
@@ -319,7 +319,7 @@ class FileLoader:
                         f"Error trying to truncate existing table. "
                         f"Columns cannot be different in name or type."
                     )
-                if dialect == "SQLITE":
+                if self.db_dialect == DbDialect.SQLITE:
                     return LoadResult(-5, "Truncate not supported by SQLITE")
                 else:
                     command_sql = f"TRUNCATE TABLE {cleaned_table_name}"
@@ -332,9 +332,9 @@ class FileLoader:
         for i, df in enumerate(data):
             start = time.time()
             rows = (row[1].to_list() for row in df.iterrows())
-            if dialect == "POSTGRESQL":
+            if self.db_dialect == DbDialect.POSTGRESQL:
                 extras.execute_values(cursor, insert_sql, rows)
-            elif dialect in ["ORACLE", "MYSQL", "SQLSERVER", "SQLITE"]:
+            else:
                 cursor.executemany(insert_sql, rows)
             end = time.time()
             records_inserted += len(df.index)
@@ -351,7 +351,7 @@ class DataLoader:
     def __init__(self,
                  data: DataFrame,
                  json_path: str,
-                 db_dialect: str,
+                 db_dialect: Union[str, DbDialect],
                  table_exists: str = "error",
                  value_convert: Optional[Callable[[Any], str]] = None):
         """
@@ -384,7 +384,7 @@ class DataLoader:
         """
         self.data = data
         self.json_path = json_path
-        self.db_dialect = db_dialect
+        self.db_dialect = DbDialect(db_dialect) if isinstance(db_dialect, str) else db_dialect
         self.table_exits = table_exists
         self.value_convert = value_convert if value_convert is not None else utf8_convert
 
@@ -440,7 +440,6 @@ class DataLoader:
         -------
         Number of records inserted. A negative result means an error occurred
         """
-        dialect = self.db_dialect.upper()
         connection = get_db_connection(self.json_path, self.db_dialect)
         cursor = connection.cursor()
         cleaned_table_name = clean_table_name(table_name)
@@ -465,19 +464,19 @@ class DataLoader:
         create_sql = f"CREATE TABLE {cleaned_table_name}({','.join(data_types)})"
 
         insert_sql = ""
-        if dialect == "POSTGRESQL":
+        if self.db_dialect == DbDialect.POSTGRESQL:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES %s"
-        elif dialect == "ORACLE":
+        elif self.db_dialect == DbDialect.ORACLE:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join((f':{i + 1}' for i in range(len(column_stats.index))))})"
-        elif dialect == "MYSQL":
+        elif self.db_dialect == DbDialect.MYSQL:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join(('%s' for _ in range(len(column_stats.index))))})"
-        elif dialect == "SQLSERVER":
+        elif self.db_dialect == DbDialect.SQLSERVER:
             cursor.fast_executemany = True
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join(('?' for _ in range(len(column_stats.index))))})"
-        elif dialect == "SQLITE":
+        elif self.db_dialect == DbDialect.SQLITE:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join(('?' for _ in range(len(column_stats.index))))})"
 
@@ -509,7 +508,7 @@ class DataLoader:
                         f"Error trying to truncate existing table. "
                         f"Columns cannot be different in name or type."
                     )
-                if dialect == "SQLITE":
+                if self.db_dialect == DbDialect.SQLITE:
                     return LoadResult(-5, "Truncate not supported by SQLITE")
                 else:
                     command_sql = f"TRUNCATE TABLE {cleaned_table_name}"
@@ -521,9 +520,9 @@ class DataLoader:
         records_inserted = 0
         start = time.time()
         rows = (row[1].to_list() for row in self.data.iterrows())
-        if dialect == "POSTGRESQL":
+        if self.db_dialect == DbDialect.POSTGRESQL:
             extras.execute_values(cursor, insert_sql, rows)
-        elif dialect in ["ORACLE", "MYSQL", "SQLSERVER", "SQLITE"]:
+        else:
             cursor.executemany(insert_sql, rows)
         end = time.time()
         records_inserted += len(self.data.index)

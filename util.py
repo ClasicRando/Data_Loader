@@ -14,6 +14,7 @@ import sqlite3
 import mysql.connector as mysql_connector
 from functools import partial
 from dataclasses import dataclass
+from enum import Enum
 from pandas import DataFrame
 
 
@@ -52,7 +53,15 @@ class LoadResult:
     num_records: int = -1
 
 
-def get_db_connection(json_path: str, db_dialect: str) -> Any:
+class DbDialect(Enum):
+    POSTGRESQL = "postgresql"
+    ORACLE = "oracle"
+    MYSQL = "mysql"
+    SQLSERVER = "sqlserver"
+    SQLITE = "sqlite"
+
+
+def get_db_connection(json_path: str, db_dialect: DbDialect) -> Any:
     """
     Gets a database connection object based upon the details in the ini file specified
 
@@ -79,28 +88,26 @@ def get_db_connection(json_path: str, db_dialect: str) -> Any:
     dialect = db_dialect.upper()
 
     # Check to make sure the credentials provided are sufficient to create a connection object
-    if dialect == "SQLITE":
-        if "host" not in db_credentials:
-            raise KeyError(f"DB parameter needed (host) is not available in the INI file")
+    if dialect == DbDialect.SQLITE:
+        missing_credentials = ["host"] if "host" not in db_credentials else []
+    elif dialect in [DbDialect.SQLSERVER, DbDialect.MYSQL, DbDialect.POSTGRESQL]:
+        missing_credentials = [p for p in connection_parameters if p not in db_credentials]
     else:
-        if dialect in ["SQLSERVER", "MYSQL", "POSTGRESQL"]:
-            missing_credentials = [p for p in connection_parameters if p not in db_credentials]
-        else:
-            missing_credentials = [p for p in oracle_conn_parameters if p not in db_credentials]
-        if missing_credentials:
-            raise KeyError(
-                f"DB parameter(s) needed ({','.join(missing_credentials)}) "
-                f"are not available in the INI file"
-            )
+        missing_credentials = [p for p in oracle_conn_parameters if p not in db_credentials]
+    if missing_credentials:
+        raise KeyError(
+            f"DB parameter(s) needed ({','.join(missing_credentials)}) "
+            f"are not available in the INI file"
+        )
 
     # Depending upon the dialect passed into this function, it will produce a different connection
     # object that is obtained from a DB's preferred library
-    if dialect == "POSTGRESQL":
+    if dialect == DbDialect.POSTGRESQL:
         return psycopg2.connect(
             f"host={db_credentials['host']} user={db_credentials['user']} "
             f"password={db_credentials['password']} dbname={db_credentials['dbname']}"
         )
-    elif dialect == "ORACLE":
+    elif dialect == DbDialect.ORACLE:
         return cx.connect(
             db_credentials['user'],
             db_credentials['password'],
@@ -108,14 +115,14 @@ def get_db_connection(json_path: str, db_dialect: str) -> Any:
             f"{':' + db_credentials['port'] if 'port' in db_credentials else ''}"
             f"/{db_credentials['service']}"
         )
-    elif dialect == "MYSQL":
+    elif dialect == DbDialect.MYSQL:
         return mysql_connector.connect(
             host=db_credentials['host'],
             user=db_credentials['user'],
             password=db_credentials['password'],
             database=db_credentials['dbname']
         )
-    elif dialect == "SQLSERVER":
+    elif dialect == DbDialect.SQLSERVER:
         return pyodbc.connect(
             "DRIVER={ODBC Driver 17 for SQL Server};"
             f"SERVER={db_credentials['host']}"
@@ -124,7 +131,7 @@ def get_db_connection(json_path: str, db_dialect: str) -> Any:
             f"UID={db_credentials['user']};"
             f"PWD={db_credentials['password']}"
         )
-    elif dialect == "SQLITE":
+    elif dialect == DbDialect.SQLITE:
         return sqlite3.connect(db_credentials['host'])
     else:
         raise Exception("Database Dialect misspelled or not supported")
@@ -132,30 +139,30 @@ def get_db_connection(json_path: str, db_dialect: str) -> Any:
 
 def check_conflicting_column_info(
         cursor,
-        db_dialect: str,
+        db_dialect: DbDialect,
         table_name: str,
         column_stats: DataFrame) -> bool:
     check_query = ""
     parameters = []
-    if db_dialect.upper() == "POSTGRESQL":
+    if db_dialect == DbDialect.POSTGRESQL:
         check_query = "select upper(column_name), upper(data_type) " \
                       "from   information_schema.columns " \
                       "where  table_name = %s"
         parameters = [table_name.lower()]
-    elif db_dialect.upper() == "ORACLE":
+    elif db_dialect == DbDialect.ORACLE:
         check_query = "select upper(column_name), upper(data_type) " \
                       "from   sys.all_tab_columns " \
                       "where  table_name = :1"
         parameters = [table_name.upper()]
-    elif db_dialect.upper() == "SQLSERVER":
+    elif db_dialect == DbDialect.MYSQL:
+        check_query = f"show columns from {table_name.upper()}"
+    elif db_dialect == DbDialect.SQLSERVER:
         check_query = "select upper(column_name), " \
                       "       upper(concat(data_type,'(',character_maximum_length,')')) " \
                       "from   information_schema.columns " \
                       "where  table_name = ?"
         parameters = [table_name.upper()]
-    elif db_dialect.upper() == "MYSQL":
-        check_query = f"show columns from {table_name.upper()}"
-    elif db_dialect.upper() == "SQLITE":
+    elif db_dialect == DbDialect.SQLITE:
         check_query = "select upper(name), upper(type) " \
                       "from   PRAGMA_table_info(?)"
         parameters = [table_name.upper()]
