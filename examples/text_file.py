@@ -3,7 +3,7 @@ from loaders import FileLoader
 fa = FileLoader(
     "tblAllTanks.txt",
     "FLAT",
-    ini_path="sample_db_config.ini",
+    json_path="sample_db_config.json",
     db_dialect="sqlserver",
     table_exists="drop",
     separator=",",
