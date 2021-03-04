@@ -3,7 +3,7 @@ from typing import Generator, Callable, Any, Optional, Union
 from sqlalchemy import create_engine
 from util import (clean_column_name, clean_table_name, find_encoding, len_b_str, get_db_connection,
                   dialect_to_col_type, convert_column, AnalyzeResult, columns_needed, read_dbf,
-                  LoadResult, check_conflicting_column_info, utf8_convert, DbDialect)
+                  LoadResult, check_conflicting_column_info, utf8_convert, DbDialect, FileType)
 from functools import partial
 from psycopg2 import extras
 import time
@@ -15,7 +15,7 @@ class FileLoader:
 
     def __init__(self,
                  file_path: str,
-                 file_type: str,
+                 file_type: Union[str, FileType],
                  json_path: str,
                  db_dialect: Union[str, DbDialect],
                  table_exists: str = "error",
@@ -28,7 +28,7 @@ class FileLoader:
         ----------
         file_path : str
             Path to a data file as a string
-        file_type : str
+        file_type : Union[str, FileType]
             Category of data file passed. Currently supported types are: 1) FLAT (.txt,
             .csv, .tsv, etc.) 2) ACCDB (.accdb and .mdb) 3) DBF (.dbf) 4) XLSX (.xlsx)
         json_path : str
@@ -76,7 +76,7 @@ class FileLoader:
             Excel files since chunking is not supported
         """
         self.path = abspath(file_path)
-        self.file_type = file_type
+        self.file_type = FileType(file_type) if isinstance(file_type, str) else file_type
         self.json_path = json_path
         self.db_dialect = DbDialect(db_dialect) if isinstance(db_dialect, str) else db_dialect
         self.table_exits = table_exists
@@ -87,14 +87,14 @@ class FileLoader:
             )
         self.encoding = "utf8"
         self.chunk_size = kwargs["chunk_size"] if "chunk_size" in kwargs else 10000
-        if self.file_type == "FLAT":
+        if self.file_type == FileType.FLAT:
             self.separator = kwargs["separator"] if "separator" in kwargs else ","
             self.qualifier = kwargs["qualifier"] if "qualifier" in kwargs else False
             if "encoding" in kwargs:
                 self.encoding = kwargs["encoding"]
             else:
                 self.encoding = find_encoding(self.path, self.file_type)
-        elif self.file_type == "ACCDB":
+        elif self.file_type == FileType.ACCDB:
             if "table_name" in kwargs:
                 self.table_name = kwargs["table_name"]
             else:
@@ -102,12 +102,12 @@ class FileLoader:
                     "table_name in access file was not passed as keyword argument."
                     "Please pass a table name from the accdb to continue"
                 )
-        elif self.file_type == "DBF":
+        elif self.file_type == FileType.DBF:
             if "encoding" in kwargs:
                 self.encoding = kwargs["encoding"]
             else:
                 self.encoding = find_encoding(self.path, self.file_type)
-        elif self.file_type == "XLSX":
+        elif self.file_type == FileType.XLSX:
             if "sheet_name" in kwargs:
                 self.sheet_name = kwargs["sheet_name"]
             else:
@@ -144,7 +144,7 @@ class FileLoader:
         Generated DataFrame instances
         """
         data = DataFrame()
-        if self.file_type == "FLAT":
+        if self.file_type == FileType.FLAT:
             data = read_csv(
                 self.path,
                 sep=self.separator,
@@ -156,7 +156,7 @@ class FileLoader:
                 # skip_blank_lines=False,
                 chunksize=self.chunk_size
             )
-        elif self.file_type == "ACCDB":
+        elif self.file_type == FileType.ACCDB:
             conn_str = "Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=" + self.path
             conn_uri = f"access+pyodbc:///?odbc_connect={urllib.parse.quote_plus(conn_str)}"
             accdb_engine = create_engine(conn_uri)
@@ -165,13 +165,13 @@ class FileLoader:
                 accdb_engine,
                 chunksize=self.chunk_size
             )
-        elif self.file_type == "DBF":
+        elif self.file_type == FileType.DBF:
             data = read_dbf(
                 self.path,
                 self.encoding,
                 self.chunk_size
             )
-        elif self.file_type == "XLSX":
+        elif self.file_type == FileType.XLSX:
             data = read_excel(
                 self.path,
                 sheet_name=self.sheet_name,

@@ -61,6 +61,13 @@ class DbDialect(Enum):
     SQLITE = "sqlite"
 
 
+class FileType(Enum):
+    FLAT = "FLAT"
+    ACCDB = "ACCDB"
+    DBF = "DBF"
+    XLSX = "XLSX"
+
+
 def get_db_connection(json_path: str, db_dialect: DbDialect) -> Any:
     """
     Gets a database connection object based upon the details in the ini file specified
