@@ -1,8 +1,8 @@
 from loaders import FileLoader
 
 fa = FileLoader(
-    "tblAllTanks.txt",
-    "FLAT",
+    file_path="tblAllTanks.txt",
+    file_type="FLAT",
     json_path="sample_db_config.json",
     db_dialect="sqlserver",
     table_exists="drop",
