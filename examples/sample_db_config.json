@@ -1,0 +1,30 @@
+{
+  "postgresql": {
+    "host": "localhost",
+    "user": "user",
+    "password": "drowssap",
+    "dbname": "test"
+  },
+  "oracle": {
+    "host": "localhost",
+    "user": "user2",
+    "password": "123456",
+    "service": "service1",
+    "port": "69"
+  },
+  "mysql": {
+    "host": "localhost",
+    "user": "user3",
+    "password": "helpiamtrapped",
+    "dbname": "testdb"
+  },
+  "sqlserver": {
+    "host": "localhost",
+    "user": "user4",
+    "password": "123456",
+    "dbname": "TestDataBase"
+  },
+  "sqlite": {
+    "host": "C:\\Path\\To\\DB\\db.sqlite3"
+  }
+}
