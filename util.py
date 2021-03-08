@@ -91,13 +91,13 @@ def get_db_connection(json_path: str, db_dialect: DbDialect) -> Any:
     """
     with open(json_path) as f:
         data = json.load(f)
-    db_credentials = data[db_dialect]
-    dialect = db_dialect.upper()
+    db_credentials = data[db_dialect.value]
+    # dialect = db_dialect.value.upper()
 
     # Check to make sure the credentials provided are sufficient to create a connection object
-    if dialect == DbDialect.SQLITE:
+    if db_dialect == DbDialect.SQLITE:
         missing_credentials = ["host"] if "host" not in db_credentials else []
-    elif dialect in [DbDialect.SQLSERVER, DbDialect.MYSQL, DbDialect.POSTGRESQL]:
+    elif db_dialect in [DbDialect.SQLSERVER, DbDialect.MYSQL, DbDialect.POSTGRESQL]:
         missing_credentials = [p for p in connection_parameters if p not in db_credentials]
     else:
         missing_credentials = [p for p in oracle_conn_parameters if p not in db_credentials]
@@ -109,12 +109,12 @@ def get_db_connection(json_path: str, db_dialect: DbDialect) -> Any:
 
     # Depending upon the dialect passed into this function, it will produce a different connection
     # object that is obtained from a DB's preferred library
-    if dialect == DbDialect.POSTGRESQL:
+    if db_dialect == DbDialect.POSTGRESQL:
         return psycopg2.connect(
             f"host={db_credentials['host']} user={db_credentials['user']} "
             f"password={db_credentials['password']} dbname={db_credentials['dbname']}"
         )
-    elif dialect == DbDialect.ORACLE:
+    elif db_dialect == DbDialect.ORACLE:
         return cx.connect(
             db_credentials['user'],
             db_credentials['password'],
@@ -122,14 +122,14 @@ def get_db_connection(json_path: str, db_dialect: DbDialect) -> Any:
             f"{':' + db_credentials['port'] if 'port' in db_credentials else ''}"
             f"/{db_credentials['service']}"
         )
-    elif dialect == DbDialect.MYSQL:
+    elif db_dialect == DbDialect.MYSQL:
         return mysql_connector.connect(
             host=db_credentials['host'],
             user=db_credentials['user'],
             password=db_credentials['password'],
             database=db_credentials['dbname']
         )
-    elif dialect == DbDialect.SQLSERVER:
+    elif db_dialect == DbDialect.SQLSERVER:
         return pyodbc.connect(
             "DRIVER={ODBC Driver 17 for SQL Server};"
             f"SERVER={db_credentials['host']}"
@@ -138,10 +138,42 @@ def get_db_connection(json_path: str, db_dialect: DbDialect) -> Any:
             f"UID={db_credentials['user']};"
             f"PWD={db_credentials['password']}"
         )
-    elif dialect == DbDialect.SQLITE:
+    elif db_dialect == DbDialect.SQLITE:
         return sqlite3.connect(db_credentials['host'])
     else:
         raise Exception("Database Dialect misspelled or not supported")
+
+
+def check_if_table_exists(cursor, db_dialect: DbDialect, table_name: str) -> bool:
+    check_query = ""
+    parameters = []
+    if db_dialect == DbDialect.POSTGRESQL:
+        check_query = "select count(*) " \
+                      "from   information_schema.columns " \
+                      "where  table_name = %s"
+        parameters = [table_name.lower()]
+    elif db_dialect == DbDialect.ORACLE:
+        check_query = "select count(*) " \
+                      "from   sys.all_tab_columns " \
+                      "where  table_name = :1"
+        parameters = [table_name.upper()]
+    elif db_dialect == DbDialect.MYSQL:
+        check_query = f"select count(*) " \
+                      f"from   information_schema.tables " \
+                      f"where  table_name = %s"
+        parameters = [table_name.lower()]
+    elif db_dialect == DbDialect.SQLSERVER:
+        check_query = "select count(*) " \
+                      "from   information_schema.columns " \
+                      "where  table_name = ?"
+        parameters = [table_name.upper()]
+    elif db_dialect == DbDialect.SQLITE:
+        check_query = "select count(*) " \
+                      "from   PRAGMA_table_info(?)"
+        parameters = [table_name.upper()]
+    cursor.execute(check_query, parameters)
+    count = cursor.fetchall()[0][0]
+    return count > 0
 
 
 def check_conflicting_column_info(
@@ -424,9 +456,9 @@ def get_sqlite_column_type(_) -> str:
 
 
 dialect_to_col_type = {
-    "ORACLE": get_oracle_column_type,
-    "POSTGRESQL": get_postgresql_column_type,
-    "MYSQL": get_mysql_column_type,
-    "SQLSERVER": get_sqlserver_column_type,
-    "SQLITE": get_sqlite_column_type
+    DbDialect.ORACLE: get_oracle_column_type,
+    DbDialect.POSTGRESQL: get_postgresql_column_type,
+    DbDialect.MYSQL: get_mysql_column_type,
+    DbDialect.SQLSERVER: get_sqlserver_column_type,
+    DbDialect.SQLITE: get_sqlite_column_type
 }

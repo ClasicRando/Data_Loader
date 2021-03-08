@@ -3,7 +3,8 @@ from typing import Generator, Callable, Any, Optional, Union
 from sqlalchemy import create_engine
 from util import (clean_column_name, clean_table_name, find_encoding, len_b_str, get_db_connection,
                   dialect_to_col_type, convert_column, AnalyzeResult, columns_needed, read_dbf,
-                  LoadResult, check_conflicting_column_info, utf8_convert, DbDialect, FileType)
+                  LoadResult, check_conflicting_column_info, utf8_convert, DbDialect, FileType,
+                  check_if_table_exists)
 from functools import partial
 from psycopg2 import extras
 import time
@@ -220,7 +221,7 @@ class FileLoader:
             right_index=True
         )
         df["Column Name Formatted"] = df.index.map(clean_column_name)
-        df["Column Type"] = df["Max Len"].map(dialect_to_col_type[self.db_dialect.upper()])
+        df["Column Type"] = df["Max Len"].map(dialect_to_col_type[self.db_dialect])
         return AnalyzeResult(1, "", num_records, df)
 
     def load_file(
@@ -291,20 +292,18 @@ class FileLoader:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join(('?' for _ in range(len(column_stats.index))))})"
 
-        try:
-            cursor.execute(create_sql)
-        except Exception as ex:
+        if check_if_table_exists(cursor, self.db_dialect, table_name):
             if self.table_exits == "error":
                 return LoadResult(
                     -5,
-                    f"Table already exists and table_exists was set to error {ex}"
+                    f"Table already exists and table_exists was set to error"
                 )
             elif self.table_exits == "drop":
                 try:
                     cursor.execute(f"DROP TABLE {cleaned_table_name}")
                     cursor.execute(create_sql)
-                except Exception as ex2:
-                    return LoadResult(-5, f"Error trying to drop table. {ex2}")
+                except Exception as ex:
+                    return LoadResult(-5, f"Error trying to drop table. {ex}")
             elif self.table_exits == "append":
                 if check_conflicting_column_info(cursor, self.db_dialect, table_name, column_stats):
                     return LoadResult(
@@ -325,15 +324,18 @@ class FileLoader:
                     command_sql = f"TRUNCATE TABLE {cleaned_table_name}"
                 try:
                     cursor.execute(command_sql)
-                except Exception as ex2:
-                    return LoadResult(-5, f"Error trying to truncate table. {ex2}")
+                except Exception as ex:
+                    return LoadResult(-5, f"Error trying to truncate table. {ex}")
 
         records_inserted = 0
         for i, df in enumerate(data):
             start = time.time()
             rows = (row[1].to_list() for row in df.iterrows())
             if self.db_dialect == DbDialect.POSTGRESQL:
-                extras.execute_values(cursor, insert_sql, rows)
+                df.to_csv("temp.csv", index=False, header=False)
+                with open("temp.csv") as f:
+                    cursor.copy_from(f, table_name)
+                # extras.execute_values(cursor, insert_sql, rows)
             else:
                 cursor.executemany(insert_sql, rows)
             end = time.time()
@@ -343,6 +345,7 @@ class FileLoader:
                 f"Loaded {records_inserted}: Time elapsed = {end - start} seconds"
             )
         connection.commit()
+        connection.close()
         return LoadResult(1, "", records_inserted)
 
 
@@ -415,7 +418,7 @@ class DataLoader:
             right_index=True
         )
         df["Column Name Formatted"] = df.index.map(clean_column_name)
-        df["Column Type"] = df["Max Len"].map(dialect_to_col_type[self.db_dialect.upper()])
+        df["Column Type"] = df["Max Len"].map(dialect_to_col_type[self.db_dialect])
         return AnalyzeResult(1, "", num_records, df)
 
     def load_data(
@@ -480,20 +483,18 @@ class DataLoader:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join(('?' for _ in range(len(column_stats.index))))})"
 
-        try:
-            cursor.execute(create_sql)
-        except Exception as ex:
+        if check_if_table_exists(cursor, self.db_dialect, table_name):
             if self.table_exits == "error":
                 return LoadResult(
                     -5,
-                    f"Table already exists and table_exists was set to error {ex}"
+                    f"Table already exists and table_exists was set to error"
                 )
             elif self.table_exits == "drop":
                 try:
                     cursor.execute(f"DROP TABLE {cleaned_table_name}")
                     cursor.execute(create_sql)
-                except Exception as ex2:
-                    return LoadResult(-5, f"Error trying to drop table. {ex2}")
+                except Exception as ex:
+                    return LoadResult(-5, f"Error trying to drop table. {ex}")
             elif self.table_exits == "append":
                 if check_conflicting_column_info(cursor, self.db_dialect, table_name, column_stats):
                     return LoadResult(
@@ -514,18 +515,24 @@ class DataLoader:
                     command_sql = f"TRUNCATE TABLE {cleaned_table_name}"
                 try:
                     cursor.execute(command_sql)
-                except Exception as ex2:
-                    return LoadResult(-5, f"Error trying to truncate table. {ex2}")
+                except Exception as ex:
+                    return LoadResult(-5, f"Error trying to truncate table. {ex}")
+
+        cursor.execute(create_sql)
 
         records_inserted = 0
         start = time.time()
         rows = (row[1].to_list() for row in self.data.iterrows())
         if self.db_dialect == DbDialect.POSTGRESQL:
-            extras.execute_values(cursor, insert_sql, rows)
+            self.data.to_csv("temp.csv", index=False, header=False)
+            with open("temp.csv") as f:
+                cursor.copy_from(f, table_name, sep=",")
+            # extras.execute_values(cursor, insert_sql, rows)
         else:
             cursor.executemany(insert_sql, rows)
         end = time.time()
         records_inserted += len(self.data.index)
         print(f"Loaded {records_inserted}: Time elapsed = {end - start} seconds")
         connection.commit()
+        connection.close()
         return LoadResult(1, "", records_inserted)
