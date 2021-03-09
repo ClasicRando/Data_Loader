@@ -6,10 +6,12 @@ from util import (clean_column_name, clean_table_name, find_encoding, len_b_str,
                   LoadResult, check_conflicting_column_info, utf8_convert, DbDialect, FileType,
                   check_if_table_exists)
 from functools import partial
-from psycopg2 import extras
 import time
+import os
 from os.path import abspath
 import urllib
+from csv import QUOTE_ALL
+from mysql.connector import errors
 
 
 class FileLoader:
@@ -276,18 +278,12 @@ class FileLoader:
         create_sql = f"CREATE TABLE {cleaned_table_name}({','.join(data_types)})"
 
         insert_sql = ""
-        if self.db_dialect == DbDialect.POSTGRESQL:
-            insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES %s"
-        elif self.db_dialect == DbDialect.ORACLE:
+        if self.db_dialect == DbDialect.ORACLE:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join((f':{i + 1}' for i in range(len(column_stats.index))))})"
-        elif self.db_dialect == DbDialect.MYSQL:
+        elif self.db_dialect == DbDialect.SQLSERVER:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join(('%s' for _ in range(len(column_stats.index))))})"
-        elif self.db_dialect == DbDialect.SQLSERVER:
-            cursor.fast_executemany = True
-            insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
-                         f"({','.join(('?' for _ in range(len(column_stats.index))))})"
         elif self.db_dialect == DbDialect.SQLITE:
             insert_sql = f"INSERT INTO {cleaned_table_name}({columns_names}) VALUES " \
                          f"({','.join(('?' for _ in range(len(column_stats.index))))})"
@@ -330,12 +326,39 @@ class FileLoader:
         records_inserted = 0
         for i, df in enumerate(data):
             start = time.time()
-            rows = (row[1].to_list() for row in df.iterrows())
+            rows = (tuple(row[1].to_list()) for row in df.iterrows())
+            df.to_csv(
+                "temp.csv",
+                index=False,
+                header=False,
+                line_terminator="\n",
+                quoting=QUOTE_ALL
+            )
             if self.db_dialect == DbDialect.POSTGRESQL:
-                df.to_csv("temp.csv", index=False, header=False)
                 with open("temp.csv") as f:
-                    cursor.copy_from(f, table_name)
-                # extras.execute_values(cursor, insert_sql, rows)
+                    cursor.copy_expert(
+                        f"COPY {table_name} FROM STDIN "
+                        f"WITH (FORMAT csv, DELIMITER ',', QUOTE '\"', ESCAPE '\"')",
+                        f
+                    )
+            elif self.db_dialect == DbDialect.MYSQL:
+                try:
+                    cursor.execute(
+                        f"LOAD DATA LOCAL INFILE 'temp.csv' "
+                        f"INTO TABLE {table_name} "
+                        f"FIELDS TERMINATED BY ',' ENCLOSED BY '\"'"
+                    )
+                except errors.ProgrammingError as err:
+                    if "Loading local data is disabled" in err.msg:
+                        raise Exception(
+                            "LOCAL INFILE enabled within connection but error was still raised. "
+                            "Check to make sure your db has local_infile enabled. "
+                            "Run this 'show global variables like 'local_infile';'"
+                        )
+                    else:
+                        raise
+                except Exception as ex:
+                    raise Exception("Unknown error during mysql bulk loading")
             else:
                 cursor.executemany(insert_sql, rows)
             end = time.time()
@@ -346,6 +369,7 @@ class FileLoader:
             )
         connection.commit()
         connection.close()
+        os.remove("temp.csv")
         return LoadResult(1, "", records_inserted)
 
 

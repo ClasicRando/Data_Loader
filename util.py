@@ -9,13 +9,14 @@ from numpy import format_float_positional
 import json
 import psycopg2
 import cx_Oracle as cx
-import pyodbc
 import sqlite3
 import mysql.connector as mysql_connector
 from functools import partial
 from dataclasses import dataclass
 from enum import Enum
 from pandas import DataFrame
+from os import getcwd
+import pymssql
 
 
 column_name_clean_ops: List[Callable] = [
@@ -123,20 +124,21 @@ def get_db_connection(json_path: str, db_dialect: DbDialect) -> Any:
             f"/{db_credentials['service']}"
         )
     elif db_dialect == DbDialect.MYSQL:
-        return mysql_connector.connect(
+        connection = mysql_connector.connect(
             host=db_credentials['host'],
             user=db_credentials['user'],
             password=db_credentials['password'],
-            database=db_credentials['dbname']
+            database=db_credentials['dbname'],
+            allow_local_infile=True,
+            allow_local_infile_in_path=getcwd()
         )
+        return connection
     elif db_dialect == DbDialect.SQLSERVER:
-        return pyodbc.connect(
-            "DRIVER={ODBC Driver 17 for SQL Server};"
-            f"SERVER={db_credentials['host']}"
-            f"{',' + db_credentials['port'] if 'port' in db_credentials else ''};"
-            f"DATABASE={db_credentials['dbname']};"
-            f"UID={db_credentials['user']};"
-            f"PWD={db_credentials['password']}"
+        return pymssql.connect(
+            server=db_credentials['host'],
+            user=db_credentials['user'],
+            password=db_credentials['password'],
+            database=db_credentials['dbname']
         )
     elif db_dialect == DbDialect.SQLITE:
         return sqlite3.connect(db_credentials['host'])
@@ -165,8 +167,8 @@ def check_if_table_exists(cursor, db_dialect: DbDialect, table_name: str) -> boo
     elif db_dialect == DbDialect.SQLSERVER:
         check_query = "select count(*) " \
                       "from   information_schema.columns " \
-                      "where  table_name = ?"
-        parameters = [table_name.upper()]
+                      "where  table_name = %s"
+        parameters = (table_name.upper())
     elif db_dialect == DbDialect.SQLITE:
         check_query = "select count(*) " \
                       "from   PRAGMA_table_info(?)"
